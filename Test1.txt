@@ -1,0 +1,277 @@
+/*
+ Arduino --> ThingSpeak Channel via WIFI shield 101
+ 
+ The ThingSpeak Client sketch is designed for the Arduino and Ethernet.
+ This sketch updates a channel feed with an analog input reading via the
+ ThingSpeak API (https://thingspeak.com/docs)
+ using HTTP POST. The Arduino uses DHCP and DNS for a simpler network setup.
+ The sketch also includes a Watchdog / Reset function to make sure the
+ Arduino stays connected and/or regains connectivity after a network outage.
+ Use the Serial Monitor on the Arduino IDE to see verbose network feedback
+ and ThingSpeak connectivity status.
+ 
+ Getting Started with ThingSpeak:
+ 
+   * Sign Up for New User Account - https://thingspeak.com/users/new
+   * Create a new Channel by selecting Channels and then Create New Channel
+   * Enter the Write API Key in this sketch under "ThingSpeak Settings"
+ 
+ Arduino Requirements:
+ 
+   * Arduino with Ethernet Shield or Arduino Ethernet
+   * Arduino 1.0+ IDE
+   
+  Network Requirements:
+   * Ethernet port on Router    
+   * DHCP enabled on Router
+   * Unique MAC Address for Arduino
+ 
+ Created: October 17, 2011 by Hans Scharler (http://www.nothans.com)
+ 
+ Additional Credits:
+ Example sketches from Arduino team, Ethernet by Adrian McEwen
+
+
+ Changing to match wifi shield by Choi DoHyun
+ 
+*/
+
+#include <SPI.h>
+#include <WiFi101.h>
+#include <DHT.h>
+#include <DHT_U.h>
+#include <Adafruit_Sensor.h>
+#include "DHT.h"
+#include "CO2Sensor.h"
+#define BOARD_VOLTAGE     (5.0)
+#define co2_PIN         A0
+#define DHTPIN 2     // what digital pin we're connected to
+#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+DHT dht(DHTPIN, DHTTYPE);
+
+//-------------------------------------Sensor
+
+CO2Sensor co2Sensor(A0, 0.99, 100);
+
+// Local Network Settings
+char ssid[] = "CNM_D";      // your network SSID (name)
+char pass[] = "cnm1205!";   // your network password
+int keyIndex = 0;                 // your network key Index number (needed only for WEP)
+
+int status = WL_IDLE_STATUS;
+
+WiFiServer server(80);
+ WiFiClient client = server.available();
+ 
+// ThingSpeak Settings
+char thingSpeakAddress[] = "api.thingspeak.com";
+String writeAPIKey = "Q25GXGJRBQPTH9GU";
+const int updateThingSpeakInterval = 16 * 1000;      // Time interval in milliseconds to update ThingSpeak (number of seconds * 1000 = interval)
+
+// Variable Setup
+long lastConnectionTime = 0; 
+boolean lastConnected = false;
+int failedCounter = 0;
+
+void setup()
+{
+  // Start Serial for debugging on the Serial Monitor
+  Serial.begin(9600);
+   co2Sensor.calibrate();
+  dht.begin();
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for native USB port only
+  }
+ // check for the presence of the shield:
+  if (WiFi.status() == WL_NO_SHIELD) {
+    Serial.println("WiFi shield not present");
+    // don't continue:
+    while (true);
+  }
+
+  // attempt to connect to Wifi network:
+  while ( status != WL_CONNECTED) {
+    Serial.print("Attempting to connect to SSID: ");
+    Serial.println(ssid);
+    // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+    status = WiFi.begin(ssid, pass);
+
+    // wait 10 seconds for connection:
+    delay(10000);
+  }
+  server.begin();
+  // you're connected now, so print out the status:
+  //Start Wifi
+  printWifiStatus();
+}
+
+void loop()
+{
+ //---- ThingSpeak message print
+  if(client.available()) Serial.println(client.read());
+
+  //---- Check Disconnect from ThingSpeak
+  if (!client.connected() && lastConnected){
+    Serial.println("...disconnected");
+    client.stop();
+  }
+  
+  //---- Update ThingSpeak
+  if(!client.connected() && (millis() - lastConnectionTime > updateThingSpeakInterval)){
+    updateThingSpeak(getco2(),getHumid(),getTemp());    
+  }
+  
+  //---- Check if Arduino Ethernet needs to be restarted
+  if (failedCounter > 3) printWifiStatus();
+  
+  lastConnected = client.connected();
+  
+
+  
+ // listen for incoming clients
+  //WiFiClient client = server.available();
+  if (client) {
+    Serial.println("new client");
+    // an http request ends with a blank line
+    boolean currentLineIsBlank = true;
+    while (client.connected()) {
+      if (client.available()) {
+        char c = client.read();
+        Serial.write(c);
+        
+        // if you've gotten to the end of the line (received a newline
+        // character) and the line is blank, the http request has ended,
+        // so you can send a reply
+        if (c == '\n' && currentLineIsBlank) {
+          // send a standard http response header
+          client.println("HTTP/1.1 200 OK");
+          client.println("Content-Type: text/html");
+          client.println("Connection: close");  // the connection will be closed after completion of the response
+          client.println("Refresh: 5");  // refresh the page automatically every 5 sec
+          client.println();
+          client.println("<!DOCTYPE HTML>");
+          client.println("<html>");
+
+  client.println("</html>");
+          break;
+        }
+        if (c == '\n') {
+          // you're starting a new line
+          currentLineIsBlank = true;
+        }
+        else if (c != '\r') {
+          // you've gotten a character on the current line
+          currentLineIsBlank = false;
+        }
+      }
+    }
+    // give the web browser time to receive the data
+    delay(1);
+
+    // close the connection:
+    client.stop();
+    Serial.println("client disonnected");
+  }
+  
+}
+
+void updateThingSpeak(int co2, float temp, float humid) {
+ if (client.connect(thingSpeakAddress, 80) > 0){       
+   //---- thingSpeak connection success
+    //String tsData = "1="+String(temp, DEC)+"&2="+String(light, DEC);
+    String tsData = "1="+String(co2,DEC)+"&2="+String(temp, DEC)+"&3=" +String(humid,DEC);
+    Serial.println("\nsend to ThingSpeak-->"+tsData);
+
+    client.print("POST /update HTTP/1.1\n");
+    client.print("Host: api.thingspeak.com\n");
+    client.print("Connection: close\n");
+    client.print("X-THINGSPEAKAPIKEY: "+writeAPIKey+"\n");
+    client.print("Content-Type: application/x-www-form-urlencoded\n");
+    client.print("Content-Length: ");
+    client.print(tsData.length());
+    client.print("\n\n");
+
+    client.print(tsData);
+
+    
+
+    
+    lastConnectionTime = millis();
+    
+    if (client.connected())
+    {
+      Serial.println("Connecting to ThingSpeak...");
+      Serial.println();
+      
+      failedCounter = 0;
+    }
+    else
+    {
+      failedCounter++;
+  
+      Serial.println("Connection to ThingSpeak failed ("+String(failedCounter, DEC)+")");   
+      Serial.println();
+    }
+    
+  }
+  else
+  {
+    failedCounter++;
+    
+    Serial.println("Connection to ThingSpeak Failed ("+String(failedCounter, DEC)+")");   
+    Serial.println();
+    
+    lastConnectionTime = millis(); 
+  }
+}
+//---------------------------------------------------------
+float getco2(void) {
+                  int val = co2Sensor.read();
+                  Serial.print("CO2 value: ");
+                  Serial.println(val);
+                  return val;
+}
+float getHumid(void){
+           
+
+                  // Reading temperature or humidity takes about 250 milliseconds!
+                  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+                   float h = dht.readHumidity();
+                   client.print("  Humidity: ");
+                   client.print(h);
+                   Serial.print(h);
+                   return  h;
+}
+float getTemp(void) {
+
+
+                  // Reading temperature or humidity takes about 250 milliseconds!
+                  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+                  // Read temperature as Celsius (the default)
+                  float t = dht.readTemperature();
+                  // Read temperature as Fahrenheit (isFahrenheit = true)
+
+                   client.print("Temperature: ");
+                   client.print(t);
+                   Serial.print(t);
+                   return  t;
+ 
+}
+
+void printWifiStatus() {
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your WiFi shield's IP address:
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
+  Serial.print("signal strength (RSSI):");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+}
+

@@ -1,0 +1,32 @@
+% Read temperature, humidity data from a ThingSpeak channel
+% and visualize the data in a single plot using the MATLAB THINGSPEAKPLOT
+% function.
+
+% Channel 12397 contains data from the MathWorks Weather Station, located
+% in Natick, Massachusetts. The data is collected once every minute. Field
+% 3 contains the humidity data, field 4 contains temperature data and field
+% 6 contains atmospheric pressure data.
+
+% Channel ID to read data from
+readChannelID = 209199;
+% Temperature Field ID
+TemperatureFieldID = 3;
+% Humidity Field ID
+HumidityFieldID = 2;
+% Channel Read API Key 
+% If your channel is private, then enter the read API
+% Key between the '' below: 
+readAPIKey = '4C55VSVK360LCI6W';
+
+% Read Temperature Data. Learn more about the THINGSPEAKREAD function by
+% going to the Documentation tab on the right side pane of this page.
+
+[temperatureData, time] = thingSpeakRead(readChannelID, 'Fields', TemperatureFieldID, 'NumPoints', 65, 'ReadKey', readAPIKey);
+temperatureData = thingSpeakRead(readChannelID, 'Fields', TemperatureFieldID, 'NumPoints', 65, 'ReadKey', readAPIKey);
+% Read Humidity Data
+humidityData = thingSpeakRead(readChannelID, 'Fields', HumidityFieldID, 'NumPoints', 65, 'ReadKey', readAPIKey);
+
+
+% Learn more about the THINGSPEAKPLOT function by going to the Documentation tab on
+% the right side pane of this page.
+thingSpeakPlot(time, [temperatureData, humidityData], 'legend',{'Temperature(กษ)', 'Humidity(%)'});
